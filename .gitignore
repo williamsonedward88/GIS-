@@ -1,0 +1,10 @@
+__pycache__/
+*.pyc
+.idea/
+.pytest_cache/
+*.tif
+*.gpkg
+*.qgz
+dist/
+build/
+.env

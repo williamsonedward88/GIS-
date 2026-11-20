@@ -1,0 +1,9 @@
+[general]
+name=Adaptive Least-Cost Path
+qgisMinimumVersion=3.28
+description=成本栅格 + 连续入口 + 自适应最小成本路径规划
+version=0.1.0
+author=A,B
+email=a@example.com
+about=课程作业
+experimental=True
