@@ -42,3 +42,52 @@ def build_c0(slope_deg: np.ndarray,
     if gt is None:
         gt = GeoTransform(0.0, 1.0, 0.0, -1.0)
     return CostGrid(cost=c, gt=gt, name="c0")
+# 从 DEM 数组到 CostGrid"的便利入口
+def build_c0_from_dem(slope_deg: np.ndarray,
+                       gt: GeoTransform,
+                       landuse: np.ndarray | None = None,
+                       road: np.ndarray | None = None,
+                       w_slope: float = 1.5,
+                       w_landuse: float = 0.3,
+                       w_road: float = 0.1,
+                       crs_wkt: str = "") -> CostGrid:
+    """从 DEM 派生的坡度数组构建成本栅格，透传 crs。"""
+    grid = build_c0(slope_deg, landuse, road,
+                    w_slope, w_landuse, w_road, gt)
+    grid.crs_wkt = crs_wkt
+    return grid
+def build_c0_from_dem(slope_deg: np.ndarray,
+                       gt: GeoTransform,
+                       landuse: np.ndarray | None = None,
+                       road: np.ndarray | None = None,
+                       w_slope: float = 1.5,
+                       w_landuse: float = 0.3,
+                       w_road: float = 0.1,
+                       crs_wkt: str = "") -> CostGrid:
+    """从 DEM 派生的坡度数组构建成本栅格，透传 crs。"""
+    grid = build_c0(slope_deg, landuse, road,
+                    w_slope, w_landuse, w_road, gt)
+    grid.crs_wkt = crs_wkt
+    return grid
+def build_c0_from_dem(slope_deg: np.ndarray,
+                       gt: GeoTransform,
+                       landuse: np.ndarray | None = None,
+                       road: np.ndarray | None = None,
+                       w_slope: float = 1.5,
+                       w_landuse: float = 0.3,
+                       w_road: float = 0.1,
+                       crs_wkt: str = "") -> CostGrid:
+    """从坡度数组构建成本栅格，透传 gt 和 crs。
+
+    返回的 CostGrid 成本范围约 [1.0, 1.0 + 权重和]，
+    NaN（DEM 无效区）会变成 inf。
+    """
+    grid = build_c0(slope_deg, landuse, road,
+                    w_slope, w_landuse, w_road, gt)
+    grid.crs_wkt = crs_wkt
+
+    # 明确：原始 DEM 上的 NaN 必须变成不可通行
+    bad = ~np.isfinite(slope_deg)
+    grid.cost[bad] = np.inf
+
+    return grid

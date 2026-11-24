@@ -1,34 +1,37 @@
-"""QgsRasterLayer -> CostGrid。只有这个文件允许 import qgis。"""
+"""QgsRasterLayer -> CostGrid。
+
+关键变化：改用 GDAL 读取，自动适配 Int16/Float32，不再假定 float32。
+"""
 from __future__ import annotations
 
 import numpy as np
 
 from ..core.types import CostGrid, GeoTransform
+from .terrain import read_raster_via_gdal
 
 
 def load_cost_layer(layer) -> CostGrid:
-    from qgis.core import QgsRasterLayer, QgsCoordinateReferenceSystem
+    """把任意栅格当成本栅格。
 
-    if not isinstance(layer, QgsRasterLayer):
-        raise TypeError("需要 QgsRasterLayer")
+    - NoData / nan / 非正数 → inf（不可通行）
+    - 其余保持原值
+    """
+    if layer is None:
+        raise ValueError("传入的图层是 None")
 
-    provider = layer.dataProvider()
-    block = provider.block(1, layer.extent(), layer.width(), layer.height())
-    H, W = layer.height(), layer.width()
+    arr, gt, crs_wkt = read_raster_via_gdal(layer)
+    cost = arr.astype(np.float32, copy=True)
 
-    arr = np.full((H, W), np.nan, dtype=np.float32)
-    for r in range(H):
-        for c in range(W):
-            v = block.value(r, c)
-            arr[r, c] = v if block.isNoData(r, c) is False else np.nan
+    cost[~np.isfinite(cost)] = np.inf
+    cost[cost <= 0] = np.inf
 
-    # 统一：NoData -> inf（不可通行）
-    cost = np.where(np.isfinite(arr), arr, np.inf).astype(np.float32)
+    n_valid = int(np.isfinite(cost).sum())
+    if n_valid == 0:
+        raise ValueError("成本栅格全部不可通行（全部 NoData 或 <= 0）")
 
-    ext = layer.extent()
-    dx = (ext.xMaximum() - ext.xMinimum()) / W
-    dy = (ext.yMaximum() - ext.yMinimum()) / H
-    gt = GeoTransform(ext.xMinimum(), dx, ext.yMaximum(), -abs(dy))
+    return CostGrid(cost=cost, gt=gt, crs_wkt=crs_wkt, name=layer.name())
 
-    return CostGrid(cost=cost, gt=gt,
-                    crs_wkt=layer.crs().toWkt(), name=layer.name())
+
+def load_dem_layer(layer):
+    """读 DEM，返回 (arr, gt, crs_wkt)。NaN 表示无效高程。"""
+    return read_raster_via_gdal(layer)
