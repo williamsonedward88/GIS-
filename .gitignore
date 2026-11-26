@@ -1,10 +1,44 @@
+# Python
 __pycache__/
 *.pyc
+*.pyo
+*.pyd
+*.egg-info/
+.venv/
+venv/
+
+# IDE
 .idea/
+.vscode/
+
+# 测试
 .pytest_cache/
-*.tif
-*.gpkg
-*.qgz
+.coverage
+htmlcov/
+
+# 构建产物
 dist/
 build/
+
+# 环境变量与密钥
 .env
+.env.*
+
+# GIS 数据文件（体积大，不入库）
+*.tif
+*.tif.aux.xml
+*.tiff
+*.gpkg
+*.qgz
+*.shp
+*.shx
+*.dbf
+*.prj
+*.geojson
+*.kml
+
+# 系统文件
+.DS_Store
+Thumbs.db
+desktop.ini
+
