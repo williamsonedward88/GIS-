@@ -37,6 +37,10 @@ build/
 *.geojson
 *.kml
 
+# 例外：北京香山真实成本数据（体积小、来源合规，作为课程实验输入数据）
+!real/
+!real/**
+
 # 系统文件
 .DS_Store
 Thumbs.db

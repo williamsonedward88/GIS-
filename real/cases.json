@@ -1,0 +1,160 @@
+{
+  "crs": "EPSG:32650",
+  "pairs": [
+    {
+      "id": 1,
+      "description": "东南至西北长距离",
+      "start_file": "start_01.geojson",
+      "end_file": "end_01.geojson",
+      "start_cell": [
+        250,
+        283
+      ],
+      "end_cell": [
+        83,
+        50
+      ],
+      "start_coordinates": [
+        433455.0,
+        4424595.0
+      ],
+      "end_coordinates": [
+        426465.0,
+        4429605.0
+      ],
+      "start_offset_from_center_m": [
+        0.0,
+        0.0
+      ],
+      "end_offset_from_center_m": [
+        0.0,
+        0.0
+      ],
+      "distance_m": 8600.011627899115
+    },
+    {
+      "id": 2,
+      "description": "东北至西南长距离",
+      "start_file": "start_02.geojson",
+      "end_file": "end_02.geojson",
+      "start_cell": [
+        66,
+        267
+      ],
+      "end_cell": [
+        267,
+        66
+      ],
+      "start_coordinates": [
+        432975.0,
+        4430115.0
+      ],
+      "end_coordinates": [
+        426945.0,
+        4424085.0
+      ],
+      "start_offset_from_center_m": [
+        0.0,
+        0.0
+      ],
+      "end_offset_from_center_m": [
+        0.0,
+        0.0
+      ],
+      "distance_m": 8527.707781109762
+    },
+    {
+      "id": 3,
+      "description": "东西向穿越",
+      "start_file": "start_03.geojson",
+      "end_file": "end_03.geojson",
+      "start_cell": [
+        167,
+        29
+      ],
+      "end_cell": [
+        167,
+        307
+      ],
+      "start_coordinates": [
+        425835.0,
+        4427085.0
+      ],
+      "end_coordinates": [
+        434175.0,
+        4427085.0
+      ],
+      "start_offset_from_center_m": [
+        0.0,
+        0.0
+      ],
+      "end_offset_from_center_m": [
+        0.0,
+        0.0
+      ],
+      "distance_m": 8340.0
+    },
+    {
+      "id": 4,
+      "description": "南北向穿越",
+      "start_file": "start_04.geojson",
+      "end_file": "end_04.geojson",
+      "start_cell": [
+        33,
+        167
+      ],
+      "end_cell": [
+        300,
+        167
+      ],
+      "start_coordinates": [
+        429975.0,
+        4431105.0
+      ],
+      "end_coordinates": [
+        429975.0,
+        4423095.0
+      ],
+      "start_offset_from_center_m": [
+        0.0,
+        0.0
+      ],
+      "end_offset_from_center_m": [
+        0.0,
+        0.0
+      ],
+      "distance_m": 8010.0
+    },
+    {
+      "id": 5,
+      "description": "中等距离斜向穿越",
+      "start_file": "start_05.geojson",
+      "end_file": "end_05.geojson",
+      "start_cell": [
+        217,
+        66
+      ],
+      "end_cell": [
+        116,
+        250
+      ],
+      "start_coordinates": [
+        426945.0,
+        4425585.0
+      ],
+      "end_coordinates": [
+        432465.0,
+        4428615.0
+      ],
+      "start_offset_from_center_m": [
+        0.0,
+        0.0
+      ],
+      "end_offset_from_center_m": [
+        0.0,
+        0.0
+      ],
+      "distance_m": 6296.927822359091
+    }
+  ]
+}
