@@ -152,11 +152,11 @@ class AnyAngleAStarSolver(Solver):
             cur = parent[cur]
         cells.reverse()
 
-        path = [anchors.get(cells[0], center(cells[0][1], cells[0][0]))]
+        path = [anchors.get(cells[0], center(*cells[0]))]
         for cell in cells[1:]:
-            path.append(center(cell[1], cell[0]))
+            path.append(center(*cell))
         end_pt = next(((x, y) for (x, y) in goals if to_cell(x, y) == cells[-1]),
-                      center(cells[-1][1], cells[-1][0]))
+                      center(*cells[-1]))
         path.append(end_pt)
 
         length = sum(math.hypot(path[i + 1][0] - path[i][0],
