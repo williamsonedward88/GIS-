@@ -20,6 +20,7 @@ from qgis.core import QgsProject, QgsRasterLayer, QgsMessageLog
 from qgis.gui import QgsMapToolEmitPoint
 
 from .core.types import PathProblem
+from .core.geometry.entry_exit_handler import boundary_to_candidates
 from .core.cost.cost_builder import build_c0_from_dem
 from .core.solver.registry import get_solver
 from .core.analysis.algorithm_selector import select_solver
@@ -50,6 +51,8 @@ class AdaptiveLCPDialog(QDialog):
         self._pending_tool = None
         self._pending_target = None
         self._pending_layer = None
+        self._entry_points = []
+        self._candidate_layer_id = None
         self._t0 = None
         self._stage_times: dict[str, float] = {}
         self._last_dir = os.path.expanduser("~")
@@ -57,6 +60,7 @@ class AdaptiveLCPDialog(QDialog):
         self.setWindowTitle("Adaptive Least-Cost Path")
         self.resize(640, 720)
         self._build_ui()
+        self._refresh_entry_controls()
         self._refresh_layers()
 
     # ==================== UI ====================
@@ -136,6 +140,23 @@ class AdaptiveLCPDialog(QDialog):
         row_e.addWidget(self.btn_pick_entry)
         f_pts.addRow("入口：", row_e)
 
+        self.cmb_entry_mode = QComboBox()
+        self.cmb_entry_mode.addItems(["单点入口", "多点入口", "边界入口"])
+        f_pts.addRow("入口方式：", self.cmb_entry_mode)
+
+        candidate_row = QHBoxLayout()
+        self.btn_pick_candidate = QPushButton("添加候选入口")
+        self.btn_clear_candidates = QPushButton("清空重选")
+        self.lbl_candidates = QLabel()
+        candidate_row.addWidget(self.btn_pick_candidate)
+        candidate_row.addWidget(self.btn_clear_candidates)
+        candidate_row.addWidget(self.lbl_candidates)
+        f_pts.addRow("候选：", candidate_row)
+
+        self.cmb_entry_mode.currentIndexChanged.connect(self._clear_entry_points)
+        self.btn_pick_candidate.clicked.connect(lambda: self._pick_from_canvas("candidate"))
+        self.btn_clear_candidates.clicked.connect(self._clear_entry_points)
+
         row_x = QHBoxLayout()
         self.spin_xx = self._mk_spin()
         self.spin_xy = self._mk_spin()
@@ -159,6 +180,7 @@ class AdaptiveLCPDialog(QDialog):
         self.cmb_pref.addItems(["自动", "快速", "平衡", "高精度"])
         f_solve.addRow("模式：", self.cmb_pref)
         layout.addWidget(g_solve)
+        self._input_groups = (g_data, g_pts, g_solve)
 
         # ---------- ④ 进度 ----------
         g_prog = QGroupBox("④ 进度")
@@ -288,6 +310,51 @@ class AdaptiveLCPDialog(QDialog):
         return self._ensure_layer_in_project(path)
 
     # ==================== 地图点选 ====================
+    def _clear_entry_points(self):
+        self._entry_points.clear()
+        self._candidate_layer_id = None
+        self._refresh_entry_controls()
+
+    def _refresh_entry_controls(self):
+        mode = self.cmb_entry_mode.currentIndex()
+        single = mode == 0
+        boundary = mode == 2
+        count = len(self._entry_points)
+
+        for widget in (self.spin_ex, self.spin_ey, self.btn_pick_entry, self.btn_auto_ends):
+            widget.setEnabled(single)
+
+        self.btn_pick_candidate.setText("选择边界端点" if boundary else "添加候选入口")
+        self.btn_pick_candidate.setEnabled(not single and (not boundary or count < 2))
+        self.btn_clear_candidates.setEnabled(not single and count > 0)
+        if single:
+            self.lbl_candidates.setText("使用上方单点输入")
+        elif boundary:
+            self.lbl_candidates.setText(f"已选 {count}/2 个端点")
+        else:
+            self.lbl_candidates.setText(f"已选 {count} 个候选入口")
+
+    def _entries_for_grid(self, dem, grid, single_entry):
+        mode = self.cmb_entry_mode.currentIndex()
+        if mode == 0:
+            return [single_entry]
+
+        if self._entry_points and self._candidate_layer_id != dem.id():
+            raise ValueError("栅格已切换，请清空并重新选入口。")
+
+        if mode == 1:
+            if len(self._entry_points) < 2:
+                raise ValueError("多点入口至少需要两个候选点。")
+            return list(self._entry_points)
+
+        if len(self._entry_points) != 2:
+            raise ValueError("请点选边界线段的两个不同端点。")
+        p0, p1 = self._entry_points
+        step = min(abs(grid.gt.dx), abs(grid.gt.dy)) / 2
+        if not np.isfinite(step) or step <= 0:
+            raise ValueError("无法确定有效的像元大小。")
+        return boundary_to_candidates(p0, p1, step)
+
     def _pick_from_canvas(self, target: str):
         try:
             dem = self._resolve_current_raster()
@@ -307,28 +374,42 @@ class AdaptiveLCPDialog(QDialog):
         QMessageBox.information(self, "点选", "请在地图上点击一个点，然后窗口会自动返回")
 
     def _on_canvas_clicked(self, point, button):
-        lyr = self._pending_layer
+        if button != Qt.LeftButton:
+            return
+
+        canvas = self.iface.mapCanvas()
+        layer = self._pending_layer
         try:
-            pt = self.iface.mapCanvas().mapSettings().mapToLayerCoordinates(lyr, point)
+            if layer is None or not layer.isValid():
+                raise ValueError("请重新选择有效的栅格。")
+            pt = canvas.mapSettings().mapToLayerCoordinates(layer, point)
             x, y = pt.x(), pt.y()
-        except Exception as e:
-            _log(f"坐标转换失败，退回画布坐标：{e}")
-            x, y = point.x(), point.y()
+            if not np.isfinite((x, y)).all():
+                raise ValueError("点选坐标无效。")
 
-        if self._pending_target == "entry":
-            self.spin_ex.setValue(x); self.spin_ey.setValue(y)
-            _log(f"入口 = ({x:.4f}, {y:.4f})")
-        else:
-            self.spin_xx.setValue(x); self.spin_xy.setValue(y)
-            _log(f"出口 = ({x:.4f}, {y:.4f})")
-
-        try:
-            self.iface.mapCanvas().unsetMapTool(self._pending_tool)
-        except Exception:
-            pass
-        self._pending_tool = None
-        self.show()
-        self.raise_()
+            if self._pending_target == "entry":
+                self.spin_ex.setValue(x)
+                self.spin_ey.setValue(y)
+            elif self._pending_target == "exit":
+                self.spin_xx.setValue(x)
+                self.spin_xy.setValue(y)
+            elif self._pending_target == "candidate":
+                if self._candidate_layer_id != layer.id():
+                    self._entry_points.clear()
+                    self._candidate_layer_id = layer.id()
+                if (x, y) not in self._entry_points:
+                    self._entry_points.append((x, y))
+                self._refresh_entry_controls()
+        except Exception as error:
+            QMessageBox.warning(self, "点选失败", str(error))
+        finally:
+            if self._pending_tool is not None:
+                canvas.unsetMapTool(self._pending_tool)
+            self._pending_tool = None
+            self._pending_target = None
+            self._pending_layer = None
+            self.show()
+            self.raise_()
 
     def _auto_fill_ends(self):
         try:
@@ -377,6 +458,8 @@ class AdaptiveLCPDialog(QDialog):
             return  # 正在运行，忽略
         self.btn_run.setEnabled(False)
         self.btn_close.setEnabled(False)
+        for group in self._input_groups:
+            group.setEnabled(False)
         self._stage_times = {}
         self._t0 = time.perf_counter()
         try:
@@ -394,6 +477,8 @@ class AdaptiveLCPDialog(QDialog):
             self._t0 = None
             self.btn_run.setEnabled(True)
             self.btn_close.setEnabled(True)
+            for group in self._input_groups:
+                group.setEnabled(True)
 
     def _do_run(self):
         # ---- 0. 参数 ----
@@ -407,9 +492,6 @@ class AdaptiveLCPDialog(QDialog):
 
         entry = (self.spin_ex.value(), self.spin_ey.value())
         exit_ = (self.spin_xx.value(), self.spin_xy.value())
-        self._last_entry = entry
-        self._last_exit = exit_
-        _log(f"入口={entry} 出口={exit_}")
 
         # ---- 1. 数据准备（坡度 / 直读） ----
         if direct_cost:
@@ -437,7 +519,9 @@ class AdaptiveLCPDialog(QDialog):
                  f"有效像元={int(finite.sum())}")
 
         # ---- 2. 求解 ----
-        problem = PathProblem(grid=grid, entries=[entry], exits=[exit_], preference=pref)
+        entries = self._entries_for_grid(dem, grid, entry)
+        _log(f"候选入口数={len(entries)} 出口={exit_}")
+        problem = PathProblem(grid=grid, entries=entries, exits=[exit_], preference=pref)
         solver_name = select_solver(problem)
         _log(f"求解器={solver_name}")
         solver = get_solver(solver_name)
@@ -489,12 +573,12 @@ class AdaptiveLCPDialog(QDialog):
         detail = " &nbsp;|&nbsp; ".join(
             f"{k} <b>{_fmt(v)}</b>" for k, v in rows
         )
-        e = getattr(self, "_last_entry", (0.0, 0.0))
-        x = getattr(self, "_last_exit", (0.0, 0.0))
+        e = result.path[0]
+        x = result.path[-1]
         html = f"""
         <table style="border-collapse:collapse;">
-        <tr><td style="padding-right:12px;">入口</td>
-            <td><b>({e[0]:.1f}, {e[1]:.1f})</b></td></tr>
+        <tr><td style="padding-right:12px;">实际入口</td>
+            <td><b>({e[0]:.3f}, {e[1]:.3f})</b></td></tr>
         <tr><td>出口</td><td><b>({x[0]:.1f}, {x[1]:.1f})</b></td></tr>
         <tr><td>算法</td><td><b>{result.solver}</b></td></tr>
         <tr><td>总成本</td><td><b>{result.total_cost:.3f}</b></td></tr>
