@@ -155,19 +155,26 @@ class AStarSolver(Solver):
 
         g = {}
         parent = {}
+        source_entry = {}
         heap = []
         k = 0
 
         # 多源初始化：支持多点/连续入口
-        for (x, y) in starts:
+        for x, y in starts:
             r, c = to_cell(x, y)
-            cx, cy = gt.pixel_to_world(c, r)
-            enter = segment_cost((x, y), (cx, cy), grid, dm)
-            if not math.isfinite(enter):
-                enter = 0.0
+            entry_point = (x, y)
+            cell_center = gt.pixel_to_world(c, r)
+
+            enter = 0.0
+            if entry_point != cell_center:
+                enter = segment_cost(entry_point, cell_center, grid, dm)
+                if not math.isfinite(enter):
+                    continue
+
             if enter < g.get((r, c), math.inf):
                 g[(r, c)] = enter
                 parent[(r, c)] = None
+                source_entry[(r, c)] = entry_point
                 heapq.heappush(heap, (enter + h(r, c), k, enter, r, c))
                 k += 1
 
@@ -240,8 +247,7 @@ class AStarSolver(Solver):
             cur = parent[cur]
         cells.reverse()
 
-        start_pt = next(((x, y) for (x, y) in starts if to_cell(x, y) == cells[0]),
-                        gt.pixel_to_world(cells[0][1], cells[0][0]))
+        start_pt = source_entry[cells[0]]
         end_pt = next(((x, y) for (x, y) in goals if to_cell(x, y) == cells[-1]),
                       gt.pixel_to_world(cells[-1][1], cells[-1][0]))
 
@@ -250,6 +256,27 @@ class AStarSolver(Solver):
                                 path[i + 1][1] - path[i][1])
                      for i in range(len(path) - 1))
 
-        return PathResult(ok=True, path=path, total_cost=g[found],
-                          length=length, visited=visited, runtime=rt,
-                          solver=self.name)
+        goal_row, goal_col = found
+        goal_center = gt.pixel_to_world(goal_col, goal_row)
+
+        tail_cost = 0.0
+        if goal_center != end_pt:
+            tail_cost = segment_cost(goal_center, end_pt, grid, dm)
+            if not math.isfinite(tail_cost):
+                return PathResult(
+                    ok=False,
+                    solver=self.name,
+                    visited=visited,
+                    runtime=rt,
+                    message="终点连接不可通行",
+                )
+
+        return PathResult(
+            ok=True,
+            path=path,
+            total_cost=g[found] + tail_cost,
+            length=length,
+            visited=visited,
+            runtime=rt,
+            solver=self.name,
+        )
