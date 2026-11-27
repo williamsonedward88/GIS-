@@ -121,31 +121,24 @@ class AnyAngleAStarSolver(Solver):
 
                 nb_center = center(nr, nc)
 
-                # === Theta* 跨接（DDA 一次搞定视线 + 成本） ===
-                if p is not None:
-                    p_anchor = anchors.get(p, center(p[0], p[1]))
-                    cross, ok = trace_segment_cost(p_anchor, nb_center, grid, dm)
-                    if ok:
-                        ng = g[p] + cross
-                        if ng < g.get((nr, nc), INF):
-                            g[(nr, nc)] = ng
-                            parent[(nr, nc)] = p
-                            anchors[(nr, nc)] = nb_center
-                            push(heap, (ng + h(nr, nc), k, ng, nr, nc))
-                            k += 1
-                            continue
+                # Compare both feasible ways to reach the neighbor.
+                step_cost, step_ok = trace_segment_cost(s_anchor, nb_center, grid, dm)
+                best_cost = gc + step_cost if step_ok else INF
+                best_parent = (r, c)
 
-                # === 标准 8 邻域回退（同样 DDA） ===
-                cur_anchor = anchors.get((r, c), center(r, c))
-                step, ok2 = trace_segment_cost(cur_anchor, nb_center, grid, dm)
-                if not ok2:
-                    continue
-                ng = gc + step
-                if ng < g.get((nr, nc), INF):
-                    g[(nr, nc)] = ng
-                    parent[(nr, nc)] = (r, c)
+                if p is not None:
+                    cross_cost, cross_ok = trace_segment_cost(anchors[p], nb_center, grid, dm)
+                    if cross_ok:
+                        cross_total = g[p] + cross_cost
+                        if cross_total <= best_cost:
+                            best_cost = cross_total
+                            best_parent = p
+
+                if best_cost < g.get((nr, nc), INF):
+                    g[(nr, nc)] = best_cost
+                    parent[(nr, nc)] = best_parent
                     anchors[(nr, nc)] = nb_center
-                    push(heap, (ng + h(nr, nc), k, ng, nr, nc))
+                    push(heap, (best_cost + h(nr, nc), k, best_cost, nr, nc))
                     k += 1
 
         rt = time.perf_counter() - t0
