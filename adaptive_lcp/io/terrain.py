@@ -81,7 +81,7 @@ def read_raster_via_gdal(layer_or_path):
     """读取栅格 → (arr: float32 HxW, GeoTransform, crs_wkt)。
 
     - 支持 QgsRasterLayer 和 str 路径
-    - 自动把 NoData 置为 nan
+    - 把 NoData 和掩膜里的无效像元置为 NaN
     - 支持 Int16 / UInt16 / Float32 / Float64
     """
     src, name = _resolve_source(layer_or_path)
@@ -96,11 +96,21 @@ def read_raster_via_gdal(layer_or_path):
         if arr is None:
             raise RuntimeError(f"栅格读取失败：{name}")
 
-        arr = arr.astype(np.float32)
-
+        invalid = ~np.isfinite(arr)
         nodata = band.GetNoDataValue()
         if nodata is not None:
-            arr[np.isclose(arr, float(nodata))] = np.nan
+            invalid |= arr == nodata
+
+        flags = band.GetMaskFlags()
+        if flags not in (gdal.GMF_ALL_VALID, gdal.GMF_NODATA):
+            # 单独保存的掩膜可与 NoData 同时存在。0 表示不可用。
+            validity = band.GetMaskBand().ReadAsArray()
+            if validity is None:
+                raise RuntimeError(f"栅格有效性掩膜读取失败：{name}")
+            invalid |= validity == 0
+
+        arr = arr.astype(np.float32)
+        arr[invalid] = np.nan
 
         g = ds.GetGeoTransform()
         if g is None or g[0] is None:
@@ -147,11 +157,17 @@ def _run_native(algo_id: str, dem_layer, z_factor: float):
 
 def slope_as_array(dem_layer, z_factor: float = 1.0):
     """返回 (slope_deg, gt, crs_wkt)。单位：度。"""
+    dem, dem_gt, _ = read_raster_via_gdal(dem_layer)
     out_path = _run_native("native:slope", dem_layer, z_factor)
-    try:
-        return read_raster_via_gdal(out_path)
-    finally:
-        pass  # 临时文件留着可调试；如需清理可加 os.remove
+    slope, slope_gt, crs_wkt = read_raster_via_gdal(out_path)
+
+    # QGIS 的坡度算法可能忽略输入栅格独立保存的有效性掩膜。
+    invalid = ~np.isfinite(dem)
+    if invalid.any():
+        if slope.shape != dem.shape or slope_gt != dem_gt:
+            raise ValueError("坡度与原 DEM 网格不一致，无法应用原始无效区。")
+        slope[invalid] = np.nan
+    return slope, slope_gt, crs_wkt
 
 
 def aspect_as_array(dem_layer, z_factor: float = 1.0):

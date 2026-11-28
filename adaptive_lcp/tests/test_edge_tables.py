@@ -12,7 +12,8 @@ def random_grid():
     rng = np.random.default_rng(42)
     H, W = 12, 12
     cost = rng.uniform(1.0, 3.0, size=(H, W)).astype(np.float32)
-    gt = GeoTransform(x0=500000.0, dx=10.0, y0=4000000.0, dy=-10.0)
+    cost[3:7, 5] = np.inf
+    gt = GeoTransform(x0=500000.0, dx=10.0, y0=4000000.0, dy=-12.0)
     return CostGrid(cost=cost, gt=gt)
 
 
@@ -36,7 +37,8 @@ def test_tables_match_segment_cost(random_grid):
                 x1, y1 = grid.gt.pixel_to_world(nc, nr)
                 slow = segment_cost((x0, y0), (x1, y1), grid)
                 fast = float(tables[(dr, dc)][r, c])
-                if not np.isfinite(slow) or not np.isfinite(fast):
+                assert np.isfinite(slow) == np.isfinite(fast)
+                if not np.isfinite(slow):
                     continue
                 rel = abs(fast - slow) / max(abs(slow), 1e-12)
                 if rel > worst:

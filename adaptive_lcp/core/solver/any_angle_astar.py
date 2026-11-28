@@ -13,7 +13,7 @@ import time
 
 import numpy as np
 
-from .astar import NEIGHBORS
+from .astar import NEIGHBORS, _is_identity_direction
 from .base import Solver
 from ..types import PathProblem, PathResult
 from ..cost.segment_cost import segment_cost, trace_segment_cost
@@ -53,7 +53,7 @@ class AnyAngleAStarSolver(Solver):
 
         goal_cells = {to_cell(x, y) for (x, y) in goals}
         goal_pts = [center(r, c) for (r, c) in goal_cells]
-        cmin = grid.min_cost
+        cmin = grid.min_cost if _is_identity_direction(dm) else 0.0
 
         if len(goal_pts) == 1:
             gx, gy = goal_pts[0]

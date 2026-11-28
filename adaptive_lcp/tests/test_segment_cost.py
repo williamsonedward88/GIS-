@@ -1,7 +1,8 @@
 import numpy as np
 
 from adaptive_lcp.core.cost.segment_cost import segment_cost, line_of_sight
-from adaptive_lcp.core.types import CostGrid, GeoTransform
+from adaptive_lcp.core.solver.registry import get_solver
+from adaptive_lcp.core.types import CostGrid, GeoTransform, PathProblem
 
 
 def test_cost_along_axis():
@@ -30,3 +31,26 @@ def test_cost_long_segment():
     grid = CostGrid(cost=cost, gt=GeoTransform(0.0, 1.0, 25.0, -1.0))
     c = segment_cost((0.5, 0.5), (20.5, 0.5), grid)
     assert abs(c - 60.0) < 1e-6
+
+
+def test_corner_obstacle_blocks_both_directions():
+    cost = np.ones((8, 4), dtype=np.float32)
+    cost[3, 2] = np.inf
+    grid = CostGrid(cost=cost, gt=GeoTransform(0.0, 1.0, 8.0, -1.0))
+    start, end = (0.5, 7.5), (3.5, 0.5)
+
+    for a, b in ((start, end), (end, start)):
+        assert not line_of_sight(a, b, grid)
+        result = get_solver("any_angle").solve(PathProblem(grid, [a], [b]))
+        assert result.ok
+        assert all(line_of_sight(p, q, grid) for p, q in zip(result.path, result.path[1:]))
+
+
+def test_two_solvers_charge_same_cost_for_same_segment():
+    grid = CostGrid(np.array([[1.0, 3.0]], dtype=np.float32), GeoTransform(0.0, 1.0, 1.0, -1.0))
+    problem = PathProblem(grid, [(0.5, 0.5)], [(1.5, 0.5)])
+
+    for name in ("astar", "any_angle"):
+        result = get_solver(name).solve(problem)
+        assert result.ok
+        assert result.total_cost == 2.0

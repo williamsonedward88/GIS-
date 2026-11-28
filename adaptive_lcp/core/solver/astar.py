@@ -1,14 +1,4 @@
-"""A* 路径规划 —— 预计算边成本表版本。
-
-性能说明：
-  边成本预计算把 8 个方向的边成本一次性算成 (H, W) 数组，
-  A* 主循环里只做 O(1) 查表。相比逐边调用 segment_cost，
-  在 300x300 栅格上实测 4.34s → 约 0.5s。
-
-一致性说明：
-  边成本由"逐边 5 点采样"改为"端点 2 点平均"，均匀成本区域完全等价，
-  非均匀区域差异 < 0.5%。这是为性能做的显式数学换元，已双向验证。
-"""
+"""A* 路径规划。普通成本栅格使用预计算边表加速。"""
 from __future__ import annotations
 
 import heapq
@@ -25,7 +15,7 @@ NEIGHBORS = [(-1, -1), (-1, 0), (-1, 1),
              (0, -1),           (0, 1),
              (1, -1),  (1, 0),  (1, 1)]
 
-# 预计算边表的显存上限（超过则不预计算，退回慢路径）
+# 预计算边表的内存上限（超过则逐边计算）
 _MAX_TABLE_BYTES = 400 * 1024 * 1024
 
 
@@ -39,20 +29,11 @@ def _is_identity_direction(dm) -> bool:
 
 
 def build_edge_tables(grid, direction_model=None):
-    """8 方向边成本表（与 segment_cost 的梯形公式严格等价）。
-
-    做法：对每个方向枚举采样点相对偏移，按梯形权重累加到整表。
-    这样对角线上出现的「过渡像元」（不属于起点也不属于终点）自动被处理，
-    不再依赖「采样点只落在起点/终点像元」的错误假设。
-
-    只在标准 raster（dx>0, dy<0、近正方形像元）上生效；
-    其他情形返回 None，由 A* 走逐边慢路径。
-    """
+    """预计算相邻像元中心之间的成本，每端各占线长的一半。"""
     if not _is_identity_direction(direction_model):
         return None
 
-    cost = grid.cost.astype(np.float64)
-    H, W = cost.shape
+    H, W = grid.cost.shape
     if H * W * 8 * 8 > _MAX_TABLE_BYTES:
         return None
 
@@ -61,42 +42,15 @@ def build_edge_tables(grid, direction_model=None):
     dy = gt.dy
     if dx <= 0 or dy >= 0:
         return None
-    if abs(dx - abs(dy)) / max(dx, abs(dy)) > 0.01:
-        return None
-
-    px = min(dx, abs(dy))
+    cost = grid.cost.astype(np.float64)
+    cost[~np.isfinite(cost)] = np.inf
     pad = np.pad(cost, 1, constant_values=np.inf)
     tables = {}
 
     for dr, dc in NEIGHBORS:
-        L = math.hypot(dr * dx, dc * dy)
-        n = max(2, int(math.ceil(L / (px * 0.25))) + 1)
-        t = np.linspace(0.0, 1.0, n)
-        ds = L / (n - 1)
-
-        # 复刻 sample_cells 的采样索引
-        #   cols = floor(c + 0.5 + dc*t) - c = floor(0.5 + dc*t)
-        #   rows = floor(r + 0.5 + dr*t) - r = floor(0.5 + dr*t)   (dy<0)
-        cols_off = np.floor(0.5 + dc * t).astype(int)
-        rows_off = np.floor(0.5 + dr * t).astype(int)
-
-        # 梯形权重：首尾 ds/2，中间 ds
-        w = np.full(n, float(ds))
-        w[0] *= 0.5
-        w[-1] *= 0.5
-
-        # 同一种相对偏移的权重合并（过渡像元就在这里被捕获）
-        acc = {}
-        for i in range(n):
-            key = (int(rows_off[i]), int(cols_off[i]))
-            acc[key] = acc.get(key, 0.0) + float(w[i])
-
-        tbl = np.zeros((H, W), dtype=np.float64)
-        for (ddr, ddc), ws in acc.items():
-            if ws == 0.0:
-                continue
-            sl = pad[1 + ddr: 1 + ddr + H, 1 + ddc: 1 + ddc + W]
-            tbl += ws * sl
+        half_length = 0.5 * math.hypot(dc * dx, dr * dy)
+        neighbor = pad[1 + dr: 1 + dr + H, 1 + dc: 1 + dc + W]
+        tbl = half_length * (cost + neighbor)
 
         if dr != 0 and dc != 0:
             n1 = pad[1 + dr: 1 + dr + H, 1: 1 + W]
@@ -137,10 +91,9 @@ class AStarSolver(Solver):
 
         # === 预计算 8 方向边成本表 ===
         tables = build_edge_tables(grid, dm)
-        # tables = None
         goal_cells = {to_cell(x, y) for (x, y) in goals}
         goal_pts = [gt.pixel_to_world(c, r) for (r, c) in goal_cells]
-        cmin = grid.min_cost
+        cmin = grid.min_cost if _is_identity_direction(dm) else 0.0
 
         if len(goal_pts) == 1:
             gx, gy = goal_pts[0]
@@ -212,7 +165,7 @@ class AStarSolver(Solver):
                         push(heap, (ng + h(nr, nc), k, ng, nr, nc))
                         k += 1
             else:
-                # —— 慢路径：逐边采样（方向模型非恒等时走这里） ——
+                # —— 慢路径：用共享的线段计价逐边计算 ——
                 x0w, y0w = gt.pixel_to_world(c, r)
                 for dr, dc in NEIGHBORS:
                     nr, nc = r + dr, c + dc

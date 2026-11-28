@@ -12,7 +12,7 @@ import numpy as np
 def sample_cells(p0, p1, grid, step_frac: float = 0.25):
     """沿 p0->p1 采样，返回 (rows, cols, ds, L)。
 
-    若任一点越界则返回 None。该函数也被 Any-angle A* 的视线判断复用。
+    若任一点越界则返回 None。求解器使用 trace_segment_cost 精确遍历。
     """
     x0, y0 = p0
     x1, y1 = p1
@@ -39,135 +39,99 @@ def sample_cells(p0, p1, grid, step_frac: float = 0.25):
 
 
 def segment_cost(p0, p1, grid, direction_model=None, step_frac: float = 0.25) -> float:
-    res = sample_cells(p0, p1, grid, step_frac)
-    if res is None:
-        return math.inf
-
-    rows, cols, ds, length = res
-    c = grid.cost[rows, cols].astype(np.float64)
-    if not np.all(np.isfinite(c)):
-        return math.inf
-
-    if direction_model is not None:
-        theta = math.atan2(p1[1] - p0[1], p1[0] - p0[0])
-        c = c * direction_model.multiplier(theta, rows, cols)
-
-    return float(np.sum((c[:-1] + c[1:]) * 0.5) * ds)
+    """返回穿过各像元的长度加权成本。step_frac 保留用于兼容旧调用。"""
+    return trace_segment_cost(p0, p1, grid, direction_model)[0]
 
 
 def line_of_sight(p0, p1, grid, step_frac: float = 0.5) -> bool:
-    """Any-angle A* 用：路径经过的所有像元是否全部可通行。"""
-    res = sample_cells(p0, p1, grid, step_frac)
-    if res is None:
-        return False
-    rows, cols, _, _ = res
-    return bool(np.all(np.isfinite(grid.cost[rows, cols])))
+    """按计价时的障碍规则检查线段。step_frac 保留用于兼容旧调用。"""
+    return trace_segment_cost(p0, p1, grid)[1]
+
+
 def trace_segment_cost(p0, p1, grid, direction_model=None):
-    """Amanatides-Woo DDA 网格遍历：一次遍历同时得成本与通行性。
-
-    返回 (cost, ok)。
-      ok=False  → 穿越不可通行像元或越界，cost 为 inf
-      ok=True   → cost 是沿线段积分得到的精确边成本
-
-    与 segment_cost 的差异：
-      - segment_cost 用 0.25 像元步长采样，边界处有 ≤0.125 像元误差
-      - 本函数精确计算每段在像元内的穿越长度，误差 0
-      - 方向模型非恒等时退回 segment_cost（DDA 不处理方向惩罚）
-    """
-    if direction_model is not None:
-        try:
-            if not direction_model.is_identity():
-                c = segment_cost(p0, p1, grid, direction_model)
-                return (c, math.isfinite(c))
-        except Exception:
-            pass
-
+    """遍历线段触及的像元，返回 (累计代价, 是否可通行)。"""
     x0, y0 = p0
     x1, y1 = p1
     gt = grid.gt
-    H, W = grid.cost.shape
-    px_w = abs(gt.dx)
-    px_h = abs(gt.dy)
+    costs = grid.cost
+    H, W = costs.shape
+    fc0, fr0 = gt.world_to_pixel(x0, y0)
+    fc1, fr1 = gt.world_to_pixel(x1, y1)
+    inf = math.inf
+    if not all(map(math.isfinite, (fc0, fr0, fc1, fr1))):
+        return inf, False
 
-    dx = x1 - x0
-    dy = y1 - y0
-    L = math.hypot(dx, dy)
-    if L == 0.0:
+    c, r = math.floor(fc0), math.floor(fr0)
+    end_c, end_r = math.floor(fc1), math.floor(fr1)
+    if not (0 <= r < H and 0 <= c < W and 0 <= end_r < H and 0 <= end_c < W):
+        return inf, False
+    if not (math.isfinite(costs[r, c]) and math.isfinite(costs[end_r, end_c])):
+        return inf, False
+
+    dx, dy = x1 - x0, y1 - y0
+    length = math.hypot(dx, dy)
+    if length == 0.0:
         return 0.0, True
 
-    # 连续像元坐标（0.0 = 左上角点，0.5 = 首像元中心）
-    fc0 = (x0 - gt.x0) / gt.dx
-    fr0 = (y0 - gt.y0) / gt.dy
-    fc1 = (x1 - gt.x0) / gt.dx
-    fr1 = (y1 - gt.y0) / gt.dy
+    dc, dr = fc1 - fc0, fr1 - fr0
+    step_c = int(dc > 0) - int(dc < 0)
+    step_r = int(dr > 0) - int(dr < 0)
+    c_offset, r_offset = int(dc > 0), int(dr > 0)
 
-    c = int(math.floor(fc0))
-    r = int(math.floor(fr0))
-    if not (0 <= r < H and 0 <= c < W):
-        return math.inf, False
-    if not np.isfinite(grid.cost[r, c]):
-        return math.inf, False
+    # 角点允许浮点舍入误差。大坐标、小像元时也计入坐标转换误差。
+    corner_tol = 1e-12
+    if step_c and step_r:
+        corner_tol += 4 * max(math.ulp(x0), math.ulp(x1)) / abs(dx)
+        corner_tol += 4 * max(math.ulp(y0), math.ulp(y1)) / abs(dy)
+        corner_tol = min(corner_tol, 1e-8)
 
-    step_c = 1 if fc1 > fc0 else (-1 if fc1 < fc0 else 0)
-    step_r = 1 if fr1 > fr0 else (-1 if fr1 < fr0 else 0)
-
-    INF = math.inf
-    if step_c > 0:
-        t_max_c = (c + 1 - fc0) * gt.dx / dx
-    elif step_c < 0:
-        t_max_c = (c - fc0) * gt.dx / dx
-    else:
-        t_max_c = INF
-    t_delta_c = abs(gt.dx / dx) if step_c != 0 else INF
-
-    if step_r > 0:
-        t_max_r = (r + 1 - fr0) * gt.dy / dy
-    elif step_r < 0:
-        t_max_r = (r - fr0) * gt.dy / dy
-    else:
-        t_max_r = INF
-    t_delta_r = abs(gt.dy / dy) if step_r != 0 else INF
-
+    rows, cols, fractions = [], [], []
     total = 0.0
-    t_cur = 0.0
-    guard = 2 * (H + W) + 32
+    t = 0.0
+    while True:
+        # 直接由格边位置算交点，避免逐格叠加引入误差。
+        t_c = (c + c_offset - fc0) / dc if step_c else inf
+        t_r = (r + r_offset - fr0) / dr if step_r else inf
+        t_next = min(t_c, t_r, 1.0)
+        value = float(costs[r, c])
+        if not math.isfinite(value):
+            return inf, False
 
-    while guard > 0:
-        guard -= 1
-        t_next = t_max_c if t_max_c < t_max_r else t_max_r
-        if t_next > 1.0:
-            t_next = 1.0
+        fraction = t_next - t
+        if direction_model is None:
+            total += value * fraction
+        elif fraction > 0:
+            rows.append(r)
+            cols.append(c)
+            fractions.append(fraction)
 
-        cval = grid.cost[r, c]
-        if not (cval < INF):
-            return INF, False
-        total += float(cval) * (t_next - t_cur) * L
+        if t_next == 1.0:
+            # 终点恰在角点时，也用相同规则校验两侧。
+            if r != end_r and c != end_c:
+                if not (math.isfinite(costs[end_r, c]) and math.isfinite(costs[r, end_c])):
+                    return inf, False
+            break
 
-        if t_next >= 1.0:
-            return total, True
-
-        t_cur = t_next
-        if t_max_c < t_max_r:
-            c += step_c
-            t_max_c += t_delta_c
-        elif t_max_r < t_max_c:
+        t = t_next
+        if abs(t_c - t_r) <= corner_tol:
+            next_r, next_c = r + step_r, c + step_c
+            if not (0 <= next_r < H and 0 <= next_c < W):
+                return inf, False
+            if not (math.isfinite(costs[next_r, c]) and math.isfinite(costs[r, next_c])):
+                return inf, False
+            r, c = next_r, next_c
+        elif t_r < t_c:
             r += step_r
-            t_max_r += t_delta_r
         else:
-            # 恰好从角点穿过：保守判定——两正交邻居任一不可通行则视为不可走
-            r1, c1 = r + step_r, c
-            r2, c2 = r, c + step_c
-            if not (0 <= r1 < H and 0 <= c1 < W
-                    and 0 <= r2 < H and 0 <= c2 < W):
-                return INF, False
-            if not (grid.cost[r1, c1] < INF) or not (grid.cost[r2, c2] < INF):
-                return INF, False
-            r += step_r
             c += step_c
-            t_max_c += t_delta_c
-            t_max_r += t_delta_r
-
         if not (0 <= r < H and 0 <= c < W):
-            return INF, False
+            return inf, False
 
-    return INF, False
+    if direction_model is not None:
+        row_indices, col_indices = np.asarray(rows), np.asarray(cols)
+        factors = direction_model.multiplier(math.atan2(dy, dx), row_indices, col_indices)
+        rates = costs[row_indices, col_indices].astype(np.float64) * factors
+        total = float(np.dot(rates, fractions))
+
+    total *= length
+    return (total, True) if math.isfinite(total) else (inf, False)
